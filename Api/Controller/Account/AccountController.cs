@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.WebUtilities;
 namespace AuthGDPR.Api.Controller.Account
 {
     // Controller che gestisce le API per login, refresh e logout
+    //
     [ApiController]
     [Route("api/account")]
     public class AccountController : ApiBaseController
