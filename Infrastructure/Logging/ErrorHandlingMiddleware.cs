@@ -37,11 +37,11 @@ namespace AuthGDPR.Infrastructure.Logging
             {
                 var auditLogService = scope.ServiceProvider.GetRequiredService<IAuditLogService>();
                 await auditLogService.LogEventAsync(
-                    userId: null, // eventualmente recupera lo userId dal contesto se disponibile
+                    userId: Guid.Empty, // eventualmente recupera lo userId dal contesto se disponibile
                     messageCategory: MessageCategory.Errore,
                     actionType: ActionType.InternalServerError,
                     entityName: "Exception",
-                    entityId: null,
+                    entityId: "0",
                     description: exception.Message,
                     ipAddress: context.Connection.RemoteIpAddress?.ToString(),
                     traceId: context.TraceIdentifier

@@ -8,7 +8,6 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace AuthGDPR.Api.Controller.Consent
 {
-    [Authorize]
     [ApiController]
     [Route("api/[controller]")]
     public class ConsentPoliciesController : ApiBaseController

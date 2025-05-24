@@ -105,6 +105,10 @@ builder.Services.AddIdentityServer(options =>
     .AddDeveloperSigningCredential();   // Per ambiente di sviluppo (non usare in produzione) = usare: certificato per la firma dei token
 
 // 4) Configurazione di Authentication: aggiungiamo Cookie e JWT Bearer
+// Leggi i percorsi dal configuration
+var loginPath = builder.Configuration["Authentication:LoginPath"];
+var logoutPath = builder.Configuration["Authentication:LogoutPath"];
+
 builder.Services.AddAuthentication(options =>
 {
     // Impostiamo il cookie come scheme di default:
@@ -115,20 +119,42 @@ builder.Services.AddAuthentication(options =>
 })
     .AddCookie(CookieAuthenticationDefaults.AuthenticationScheme, options =>
     {
-        // Opzioni personalizzate, per esempio:
-        options.Cookie.Name = "idsrv";
-        // Puoi configurare la durata e altri parametri del cookie se necessario
+        // Nome del cookie di autenticazione
+        options.Cookie.Name = "auth-gdpr-cookie";
+        // Impedisce l’accesso al cookie da JavaScript (protezione XSS)
+        options.Cookie.HttpOnly = true;
+        // Richiede che il cookie sia trasmesso solo su HTTPS
+        options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+        // Impone che il cookie sia inviato solo in richieste di tipo same-site (protezione CSRF)
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        // Durata massima del cookie (8 ore)
+        options.ExpireTimeSpan = TimeSpan.FromHours(8);
+        // Abilita la scadenza "sliding" (il cookie si rinnova ad ogni richiesta)
+        options.SlidingExpiration = true;
+        // Percorso della pagina di login e logout (per redirect automatici)
+        //options.LoginPath = loginPath;
+        //options.LogoutPath = logoutPath;
     })
     .AddJwtBearer("Bearer", options =>
     {
+        // URL dell'IdentityServer che emette i token (issuer)
         options.Authority = builder.Configuration["IdentityServer:Authority"]
                             ?? "https://localhost:5001";
         options.TokenValidationParameters = new TokenValidationParameters
         {
+            // Verifica che il token sia stato emesso dal server atteso
+            ValidateIssuer = true,
+            ValidIssuer = builder.Configuration["Jwt:Issuer"],
+            // Richiede che il token abbia una data di scadenza
+            RequireExpirationTime = true,
+            // Verifica che il token sia destinato all'audience corretta
             ValidateAudience = true,
-            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "gdpr-api",
+            ValidAudience = builder.Configuration["Jwt:Audience"],
+            // Richiede che il token sia firmato
             RequireSignedTokens = true,
         };
+        // Salva il token validato nel contesto dell'autenticazione
+        options.SaveToken = true;
     });
 
 // 5) DI vario
@@ -190,7 +216,10 @@ builder.Services.AddControllers()
 // 6) Swagger + OAuth2
 builder.Services.AddSwaggerGen(c =>
 {
-    c.SwaggerDoc("v1", new OpenApiInfo { Title = "GDPR API", Version = "v1" });
+    // Definizione della documentazione OpenAPI
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "GDPR API v1", Version = "v1" });
+
+    // Definizione dello schema di sicurezza OAuth2 (Authorization Code Flow)
     c.AddSecurityDefinition("oauth2", new OpenApiSecurityScheme
     {
         Type = SecuritySchemeType.OAuth2,
@@ -210,27 +239,58 @@ builder.Services.AddSwaggerGen(c =>
             }
         }
     });
+
+    // Definizione dello schema di sicurezza JWT Bearer per autenticazione tramite header Authorization
+    c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Description = "JWT Authorization header using the Bearer scheme. Example: \"Authorization: Bearer {token}\"",
+        Name = "Authorization",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer"
+    });
+
+    // Richiesta di sicurezza: le API richiedono uno dei due schemi (OAuth2 o Bearer)
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
             new OpenApiSecurityScheme
             {
-                Reference = new OpenApiReference {
-                    Type = ReferenceType.SecurityScheme, Id = "oauth2"
-                }
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "oauth2" }
             },
             new[] { "openid", "profile", "api1", "offline_access" }
+        },
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
         }
     });
 });
 
-builder.Services.AddCors(opt =>
-    opt.AddPolicy("AllowLocal", p =>
-        p.WithOrigins(builder.Configuration["Cors:AllowedOrigins"]?.Split(';') ?? Array.Empty<string>())
-         .AllowAnyHeader()
-         .AllowAnyMethod()
-    )
-);
+// Configurazione CORS (Cross-Origin Resource Sharing)
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("AllowLocal", policy =>
+    {
+        // Recupera gli origin consentiti dalla configurazione (separati da ;)
+        var origins = builder.Configuration["Cors:AllowedOrigins"]?.Split(';', StringSplitOptions.RemoveEmptyEntries) ?? Array.Empty<string>();
+        // Consente solo gli origin specificati, tutti gli header e tutti i metodi HTTP
+        policy.WithOrigins(origins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials(); // Consenti invio di cookie/autenticazione cross-origin (solo se necessario)
+    });
+});
+//builder.Services.AddCors(opt =>
+//    opt.AddPolicy("AllowLocal", p =>
+//        p.WithOrigins(builder.Configuration["Cors:AllowedOrigins"]?.Split(';') ?? Array.Empty<string>())
+//         .AllowAnyHeader()
+//         .AllowAnyMethod()
+//    )
+//);
 
 var app = builder.Build();
 
@@ -241,6 +301,7 @@ using (var scope = app.Services.CreateScope())
     var logger = loggerFactory.CreateLogger("SeedData");
     var env = scope.ServiceProvider.GetRequiredService<IHostEnvironment>();
     await AuthGDPR.Infrastructure.SeedData.EnsureSeedDataAsync(app, logger, env);
+    logger.LogInformation("Seed completato");
 }
 
 if (app.Environment.IsDevelopment())
@@ -251,18 +312,19 @@ if (app.Environment.IsDevelopment())
         c.SwaggerEndpoint("/swagger/v1/swagger.json", "GDPR API v1");
         c.OAuthClientId("swagger-ui");
         c.OAuthUsePkce();
+        c.OAuth2RedirectUrl("https://localhost:7040/swagger/oauth2-redirect.html");
         c.OAuthScopeSeparator(" ");
-        c.OAuthAppName("Swagger UI for GDPR API");
+        c.OAuthAppName("Swagger UI");
     });
 }
 
-// Il middleware cattura tutte le eccezioni non gestite che si verificano durante l'esecuzione della pipeline HTTP.
-/*
-    Questo middleware è fondamentale perché copre i casi in cui va in errore il codice a runtime (errori imprevisti o bug) 
-    e trasforma tali eccezioni in una risposta JSON formattata come ProblemDetails (solitamente con status 500), 
-    eseguendo contemporaneamente eventuali operazioni di logging, per esempio tramite il servizio AuditLogService
- */
-app.UseMiddleware<ErrorHandlingMiddleware>();
+app.UseHttpsRedirection();
+app.UseCors("AllowLocal");
+
+// Abilita il routing
+app.UseRouting();
+
+app.UseIdentityServer();
 
 // Errori non gestiti
 /*
@@ -276,6 +338,7 @@ app.UseStatusCodePages(async context =>
     if (!response.HasStarted && response.StatusCode != StatusCodes.Status200OK)
     {
         var request = context.HttpContext.Request;
+
         // Costruisco un dizionario di errori con la chiave "generic"
         var errors = new Dictionary<string, string[]>
         {
@@ -297,10 +360,14 @@ app.UseStatusCodePages(async context =>
     }
 });
 
-app.UseHttpsRedirection();
-app.UseCors("AllowLocal");
+// Il middleware cattura tutte le eccezioni non gestite che si verificano durante l'esecuzione della pipeline HTTP.
+/*
+    Questo middleware è fondamentale perché copre i casi in cui va in errore il codice a runtime (errori imprevisti o bug) 
+    e trasforma tali eccezioni in una risposta JSON formattata come ProblemDetails (solitamente con status 500), 
+    eseguendo contemporaneamente eventuali operazioni di logging, per esempio tramite il servizio AuditLogService
+ */
+app.UseMiddleware<ErrorHandlingMiddleware>();
 
-app.UseIdentityServer();
 app.UseAuthentication();
 app.UseAuthorization();
 

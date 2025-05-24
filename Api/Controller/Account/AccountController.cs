@@ -18,7 +18,6 @@ using Microsoft.AspNetCore.WebUtilities;
 namespace AuthGDPR.Api.Controller.Account
 {
     // Controller che gestisce le API per login, refresh e logout
-    //
     [ApiController]
     [Route("api/account")]
     public class AccountController : ApiBaseController
@@ -31,7 +30,6 @@ namespace AuthGDPR.Api.Controller.Account
 
         private readonly IAccountService _accountService;
 
-        //private readonly IAuditLogService _auditLogService;
         private readonly IEmailCustomSender _emailCustomSender; // Servizio per l'invio delle email
 
         private readonly IUserConsentService _userConsentService;
@@ -56,7 +54,6 @@ namespace AuthGDPR.Api.Controller.Account
 
             _accountService = accountService;
 
-            //_auditLogService = auditLogService;
             _emailCustomSender = emailCustomSender;
 
             _userConsentService = userConsentService;
@@ -67,53 +64,62 @@ namespace AuthGDPR.Api.Controller.Account
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] Application.DTOs.Account.RegisterRequest request)
         {
-
-            if (request == null ||
-                string.IsNullOrWhiteSpace(request.Username) ||
-                string.IsNullOrWhiteSpace(request.Email) ||
-                string.IsNullOrWhiteSpace(request.Password) ||
-                string.IsNullOrWhiteSpace(request.FirstName) ||
-                string.IsNullOrWhiteSpace(request.LastName))
+            // Validazione del modello in ingresso
+            if (!ModelState.IsValid)
             {
+                // Acquisco gli errori del ModelState per restituire un errore dettagliato
+                var errorList = ModelState
+                    .Where(x => x.Value.Errors.Count > 0)
+                    .Select(x => new { Field = x.Key, Errors = x.Value.Errors.Select(e => e.ErrorMessage) })
+                    .ToList();
 
-                // Utilizziamo il metodo helper per loggare l'evento e restituire l'errore
+                // Unisco gli errori in una stringa per il log e la risposta
+                string errorDescription = string.Join(" | ", errorList.SelectMany(x => x.Errors));
+
+                // Restituisce errore dettagliato e loggato
                 return await CreateErrorResponseAsync(
-                    statusCode: StatusCodes.Status400BadRequest,
-                    messageCategory: MessageCategory.Errore,
-                    actionType: ActionType.Register,
-                    userId: Guid.Empty,
-                    entityName: "ApplicationUser",
-                    entityId: "0",
-                    errorEnum: ApiMessages.ErroreInputDati,
-                    ipAddress: HttpContext.Connection.RemoteIpAddress.ToString()
+                    StatusCodes.Status400BadRequest,
+                    MessageCategory.Errore,
+                    ActionType.Created,
+                    Guid.Empty,
+                    "ApplicationUser",
+                    "0",
+                    ApiMessages.ErroreInputDati,
+                    HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    errorDescription
                 );
-
-                // Esegui il logging e costruisci la risposta di errore tramite la factory,
-                // passando il servizio di log come parametro.
-                //return ErrorResponseFactory.CreateErrorResponse(
-                //    auditLogService: _auditLogService,
-                //    statusCode: StatusCodes.Status400BadRequest,
-                //    errorEnum: ErrorMessages.DatiMancanti,
-                //    actionType: ActionType.Register,
-                //    userId: Guid.Empty,
-                //    entityName: "ApplicationUser",
-                //    entityId: "0",
-                //    ipAddress: ""
-                //);
-                //return BadRequest("Dati di registrazione mancanti o non validi.");
             }
 
             // Verifica se esiste già un utente con lo stesso username o email
             var existingUserByName = await _userManager.FindByNameAsync(request.Username);
             if (existingUserByName != null)
             {
-                return BadRequest("Username già in uso.");
+                // Restituisce errore dettagliato e loggato
+                return await CreateErrorResponseAsync(
+                    StatusCodes.Status400BadRequest,
+                    MessageCategory.Errore,
+                    ActionType.Created,
+                    Guid.Empty,
+                    "ApplicationUser",
+                    "0",
+                    ApiMessages.ErroreUsername,
+                    HttpContext.Connection.RemoteIpAddress?.ToString()
+                );
             }
-
             var existingUserByEmail = await _userManager.FindByEmailAsync(request.Email);
             if (existingUserByEmail != null)
             {
-                return BadRequest("Email già in uso.");
+                // Restituisce errore dettagliato e loggato
+                return await CreateErrorResponseAsync(
+                    StatusCodes.Status400BadRequest,
+                    MessageCategory.Errore,
+                    ActionType.Created,
+                    Guid.Empty,
+                    "ApplicationUser",
+                    "0",
+                    ApiMessages.ErroreEmail,
+                    HttpContext.Connection.RemoteIpAddress?.ToString()
+                );
             }
 
             // Controlla che i consensi obbligatori siano accettati.
@@ -154,7 +160,19 @@ namespace AuthGDPR.Api.Controller.Account
             if (!result.Succeeded)
             {
                 var errors = string.Join(", ", result.Errors.Select(e => e.Description));
-                return BadRequest($"Errore nella registrazione dell'utente: {errors}");
+
+                // Restituisce errore dettagliato e loggato
+                return await CreateErrorResponseAsync(
+                    StatusCodes.Status400BadRequest,
+                    MessageCategory.Errore,
+                    ActionType.Created,
+                    Guid.Empty,
+                    "ApplicationUser",
+                    "0",
+                    ApiMessages.ErroreRegistrazione,
+                    HttpContext.Connection.RemoteIpAddress?.ToString(),
+                    errors
+                );
             }
 
             // Dopo la creazione dell'utente, per ciascun consenso inviato nel DTO,
@@ -198,19 +216,31 @@ namespace AuthGDPR.Api.Controller.Account
             //    return BadRequest("Nessuna policy attiva disponibile per il consenso.");
             //}
 
-            // (Opzionale) Puoi registrare un evento di audit o inviare una email di conferma.
-            //await _auditLogService.LogEventAsync(
-            //    userId: newUser.Id,
-            //    messageCategory: MessageCategory.Successo,
-            //    actionType: ActionType.Register,      // Assicurati che ActionType.Register esista nella tua enum
-            //    entityName: "ApplicationUser",         // Nome dell'entità interessata
-            //    entityId: newUser.Id.ToString(),       // L'ID dell'entità (in questo caso, l'utente)
-            //    description: $"L'utente '{newUser.Email}' è stato creato con successo. Link di conferma: {confirmationLink}",
-            //    ipAddress: null                        // Oppure, se disponibile, l'indirizzo IP
-            //);
+            var registerResponse = new RegisterResponse
+            {
+                PseudonymizedUserId = newUser.PseudonymizedUserId,
+                UserName = newUser.UserName,
+                Email = newUser.Email,
+                FirstName = newUser.FirstName,
+                LastName = newUser.LastName,
+                Address = newUser.Address,
+                CreatedAt = newUser.CreatedAt,
+                EmailConfirmed = newUser.EmailConfirmed
+            };
 
             // Ritorna una risposta di successo
-            return Ok(new RegisterResponse { Message = $"Registrazione avvenuta con successo. Link di conferma: {confirmationLink}" });
+            return await CreateSuccessResponseAsync(
+                StatusCodes.Status201Created,
+                MessageCategory.Successo,
+                ActionType.Created,
+                newUser.Id,
+                "ApplicationUser",
+                newUser.Id.ToString(),
+                "Registrazione avvenuta con successo. Proseguire con il link di conferma dell'email",
+                registerResponse,
+                HttpContext.Connection.RemoteIpAddress?.ToString()
+            );
+
         }
 
         // GET: /api/account/confirm-email?userId=...&token=...
