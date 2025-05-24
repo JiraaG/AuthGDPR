@@ -257,9 +257,6 @@ namespace AuthGDPR.Api.Controller.Account
                 return BadRequest("Errore durante la conferma dell'email.");
             }
 
-            //return confirmResult.Succeeded
-            //    ? Ok("Email confermata con successo.")
-            //    : BadRequest("Errore durante la conferma dell'email.");
         }
 
         // POST: /api/account/login
