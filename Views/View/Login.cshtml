@@ -1,0 +1,27 @@
+﻿@using System.Security.Claims
+@{
+    ViewData["Title"] = "Verifica OAuth2";
+    var user = User;
+}
+
+<h2>Verifica OAuth2</h2>
+
+@if (user?.Identity?.IsAuthenticated ?? false)
+{
+    <p><strong>Utente autenticato!</strong></p>
+    <ul>
+        <li><strong>Nome:</strong> @user.Identity.Name</li>
+        <li><strong>Authentication Type:</strong> @user.Identity.AuthenticationType</li>
+    </ul>
+    <h4>Claims:</h4>
+    <ul>
+        @foreach (var claim in user.Claims)
+        {
+            <li><strong>@claim.Type</strong>: @claim.Value</li>
+        }
+    </ul>
+}
+else
+{
+    <p style="color:red;">Utente NON autenticato.</p>
+}

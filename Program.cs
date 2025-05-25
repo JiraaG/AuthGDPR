@@ -76,6 +76,10 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddDefaultTokenProviders();
 
 // 3) IdentityServer con EF Configuration & Operational stores
+// Leggi i percorsi dal configuration
+var loginPath = builder.Configuration["Authentication:LoginPath"];
+var logoutPath = builder.Configuration["Authentication:LogoutPath"];
+
 builder.Services.AddIdentityServer(options =>
 {
     // Imposta la generazione statica degli audience claim per i JWT
@@ -86,6 +90,10 @@ builder.Services.AddIdentityServer(options =>
     options.Events.RaiseInformationEvents = true;
     options.Events.RaiseFailureEvents = true;
     options.Events.RaiseSuccessEvents = true;
+
+    // Redirecy personalizzati (per prova) Impostare corretto in produzione
+    options.UserInteraction.LoginUrl = loginPath; // Percorso della pagina di login
+    options.UserInteraction.LogoutUrl = logoutPath; // Percorso della pagina di logout
 })
     .AddAspNetIdentity<ApplicationUser>()
     .AddConfigurationStore(cfg =>
@@ -106,8 +114,8 @@ builder.Services.AddIdentityServer(options =>
 
 // 4) Configurazione di Authentication: aggiungiamo Cookie e JWT Bearer
 // Leggi i percorsi dal configuration
-var loginPath = builder.Configuration["Authentication:LoginPath"];
-var logoutPath = builder.Configuration["Authentication:LogoutPath"];
+//var loginPath = builder.Configuration["Authentication:LoginPath"];
+//var logoutPath = builder.Configuration["Authentication:LogoutPath"];
 
 builder.Services.AddAuthentication(options =>
 {
@@ -138,8 +146,7 @@ builder.Services.AddAuthentication(options =>
     .AddJwtBearer("Bearer", options =>
     {
         // URL dell'IdentityServer che emette i token (issuer)
-        options.Authority = builder.Configuration["IdentityServer:Authority"]
-                            ?? "https://localhost:5001";
+        options.Authority = builder.Configuration["IdentityServer:Authority"];
         options.TokenValidationParameters = new TokenValidationParameters
         {
             // Verifica che il token sia stato emesso dal server atteso
@@ -182,8 +189,9 @@ builder.Services.AddScoped<IOtpChallengeService, OtpChallengeService>();
 builder.Services.Configure<PseudonymizationOptions>(builder.Configuration.GetSection("Pseudonymization"));
     // Registra il servizio di pseudonimizzazione
 builder.Services.AddScoped<PseudonymizerService>();
-    // Default controller
-builder.Services.AddControllers();
+
+// Default controller
+builder.Services.AddControllersWithViews();
 
 // Configurazione dei controller con gestione globale degli errori di validazione
 // Viene gestito l'errore globale generato di default dall'ApiController di ASP.NET Core
@@ -321,10 +329,10 @@ if (app.Environment.IsDevelopment())
 app.UseHttpsRedirection();
 app.UseCors("AllowLocal");
 
+app.UseIdentityServer();
+
 // Abilita il routing
 app.UseRouting();
-
-app.UseIdentityServer();
 
 // Errori non gestiti
 /*
@@ -372,4 +380,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Per root ccontroller mvc
+//app.MapDefaultControllerRoute();
+
 app.Run();
